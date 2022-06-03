@@ -1,34 +1,26 @@
-// #define OLC_PGE_APPLICATION
-
-// #include<iostream>
-// #include "olcPixelGameEngine.h"
-
-// using namespace std;
-// int main(){
-
-// cout<<"hello world.\n";
-
-//     return 0;
-// }
-
 #include "olcPixelGameEngine.h"
 
-
+// Forward declare shape, since we use it in sNode
 struct sShape;
 
-struct sNode{
-    sShape *parent;
-    olc::vf2d pos;
+// Define a node
+struct sNode
+{
+	sShape *parent;
+	olc::vf2d pos;
 };
 
+// Our BASE class, defines the interface for all shapes
+struct sShape
+{
+	// Shapes are defined by the placment of nodes
+	std::vector<sNode> vecNodes;
+	uint32_t nMaxNodes = 0;
 
+	// The colour of the shape
+	olc::Pixel col = olc::GREEN;
 
-
-struct sShape{
-    std::vector<sNode> vecNodes;
-    uint32_t nMaxNodes = 0;
-    olc::Pixel col = olc::GREEN;
-// All shapes share word to screen transformation
+	// All shapes share word to screen transformation
 	// coefficients, so share them staically
 	static float fWorldScale;
 	static olc::vf2d vWorldOffset;
@@ -43,13 +35,10 @@ struct sShape{
 	// This is a PURE function, which makes this class abstract. A sub-class
 	// of this class must provide an implementation of this function by
 	// overriding it
+    // overriding it ensures that the function signature is preserved
 	virtual void DrawYourself(olc::PixelGameEngine *pge) = 0;
 
-	// Shapes are defined by nodes, the shape is responsible
-	// for issuing nodes that get placed by the user. The shape may
-	// change depending on how many nodes have been placed. Once the
-	// maximum number of nodes for a shape have been placed, it returns
-	// nullptr
+
 	sNode* GetNextNode(const olc::vf2d &p)
 	{
 		if (vecNodes.size() == nMaxNodes)
@@ -89,45 +78,188 @@ struct sShape{
 			pge->FillCircle(sx, sy, 2, olc::RED);
 		}
 	}
+};
 
+// We must provide an implementation of our static variables
+float sShape::fWorldScale = 1.0f;
+olc::vf2d sShape::vWorldOffset = { 0,0 };
+
+
+
+// LINE sub class, inherits from sShape
+struct sLine : public sShape
+{
+	sLine()
+	{
+		nMaxNodes = 2;
+		vecNodes.reserve(nMaxNodes); // We're gonna be getting pointers to vector elements
+		// though we have defined already how much capacity our vector will have. This makes
+		// it safe to do this as we know the vector will not be maniupulated as we add nodes
+		// to it. Is this bad practice? Possibly, but as with all thing programming, if you
+		// know what you are doing, it's ok :D
+	}
+
+	// Implements custom DrawYourself Function, meaning the shape
+	// is no longer abstract
+	void DrawYourself(olc::PixelGameEngine *pge) override
+	{
+		int sx, sy, ex, ey;
+		WorldToScreen(vecNodes[0].pos, sx, sy);
+		WorldToScreen(vecNodes[1].pos, ex, ey);
+		pge->DrawLine(sx, sy, ex, ey, col);
+	}
+};
+
+
+// BOX
+struct sBox : public sShape
+{
+	sBox()
+	{
+		nMaxNodes = 2;
+		vecNodes.reserve(nMaxNodes); 
+	}
+
+	void DrawYourself(olc::PixelGameEngine *pge) override
+	{
+		int sx, sy, ex, ey;
+		WorldToScreen(vecNodes[0].pos, sx, sy);
+		WorldToScreen(vecNodes[1].pos, ex, ey);
+		pge->DrawRect(sx, sy, ex - sx, ey - sy, col);
+	}
+};
+
+
+// CIRCLE
+struct sCircle : public sShape
+{
+	sCircle()
+	{
+		nMaxNodes = 2;
+		vecNodes.reserve(nMaxNodes);
+	}
+
+	void DrawYourself(olc::PixelGameEngine *pge) override
+	{
+		float fRadius = (vecNodes[0].pos - vecNodes[1].pos).mag();
+		int sx, sy, ex, ey;
+		WorldToScreen(vecNodes[0].pos, sx, sy);
+		WorldToScreen(vecNodes[1].pos, ex, ey);
+		pge->DrawLine(sx, sy, ex, ey, col, 0xFF00FF00);
+
+		// Note the radius is also scaled so it is drawn appropriately
+		pge->DrawCircle(sx, sy, (int32_t)(fRadius * fWorldScale), col);
+	}
+};
+
+// BEZIER SPLINE - requires 3 nodes to be defined fully
+struct sCurve : public sShape
+{
+	sCurve()
+	{
+		nMaxNodes = 3;
+		vecNodes.reserve(nMaxNodes);
+	}
+
+	void DrawYourself(olc::PixelGameEngine *pge) override
+	{
+		int sx, sy, ex, ey;
+
+		if (vecNodes.size() < 3)
+		{
+			// Can only draw line from first to second
+			WorldToScreen(vecNodes[0].pos, sx, sy);
+			WorldToScreen(vecNodes[1].pos, ex, ey);
+			pge->DrawLine(sx, sy, ex, ey, col, 0xFF00FF00);
+		}
+
+		if (vecNodes.size() == 3)
+		{
+			// Can draw line from first to second
+			WorldToScreen(vecNodes[0].pos, sx, sy);
+			WorldToScreen(vecNodes[1].pos, ex, ey);
+			pge->DrawLine(sx, sy, ex, ey, col, 0xFF00FF00);
+
+			// Can draw second structural line
+			WorldToScreen(vecNodes[1].pos, sx, sy);
+			WorldToScreen(vecNodes[2].pos, ex, ey);
+			pge->DrawLine(sx, sy, ex, ey, col, 0xFF00FF00);
+
+			// And bezier curve
+			olc::vf2d op = vecNodes[0].pos;
+			olc::vf2d np = op;
+			for (float t = 0; t < 1.0f; t += 0.01f)
+			{
+				np = (1 - t)*(1 - t)*vecNodes[0].pos + 2 * (1 - t)*t*vecNodes[1].pos + t * t * vecNodes[2].pos;
+				WorldToScreen(op, sx, sy);
+				WorldToScreen(np, ex, ey);
+				pge->DrawLine(sx, sy, ex, ey, col);
+				op = np;
+			}
+		}
+
+	}
 };
 
 
 
+class DesignTool : public olc::PixelGameEngine
+{
+public:
+	DesignTool()
+	{
+		sAppName = "DesignTool";
+	}
+
+private:
+	// Pan & Zoom variables
+	olc::vf2d vOffset = { 0.0f, 0.0f };
+	olc::vf2d vStartPan = { 0.0f, 0.0f };
+	float fScale = 10.0f;
+	float fGrid = 1.0f;
+
+	// Convert coordinates from World Space --> Screen Space
+	void WorldToScreen(const olc::vf2d &v, int &nScreenX, int &nScreenY)
+	{
+		nScreenX = (int)((v.x - vOffset.x) * fScale);
+		nScreenY = (int)((v.y - vOffset.y) * fScale);
+	}
+
+	// Convert coordinates from Screen Space --> World Space
+	void ScreenToWorld(int nScreenX, int nScreenY, olc::vf2d &v)
+	{
+		v.x = (float)(nScreenX) / fScale + vOffset.x;
+		v.y = (float)(nScreenY) / fScale + vOffset.y;
+	}
 
 
+	// A pointer to a shape that is currently being defined
+	// by the placment of nodes
+	sShape* tempShape = nullptr;
+
+	// A list of pointers to all shapes which have been drawn
+	// so far
+	std::list<sShape*> listShapes;
+
+	// A pointer to a node that is currently selected. Selected 
+	// nodes follow the mouse cursor
+	sNode *selectedNode = nullptr;
+
+	// "Snapped" mouse location
+	olc::vf2d vCursor = { 0, 0 };
 
 
-class DesignTool : public olc::PixelGameEngine{
-    private:
-        olc::vf2d vOffset = { 0.0f, 0.0f};
-        olc::vf2d vStartPan = { 0.0f, 0.0f };
-        float fScale = 10.0f;
-        float fGrid = 1.0f;
+public:
+	bool OnUserCreate() override
+	{
+		// Configure world space (0,0) to be middle of screen space
+		vOffset = { (float)(-ScreenWidth() / 2) / fScale, (float)(-ScreenHeight() / 2) / fScale };
+		return true;
+	}
 
-        void WorldToScreen(const olc::vf2d &v, int& nScreenX, int& nScreenY){
-            nScreenX = (int)((v.x - vOffset.x) * fScale);
-            nScreenY = (int)((v.y - vOffset.y) * fScale);
-        }
-
-        void ScreenToWorld(int nScreenX, int nScreenY, olc::vf2d &v){
-            v.x = (float)(nScreenX) / fScale + vOffset.x;
-            v.y = (float)(nScreenY) /fScale + vOffset.y;
-        }
-   
-    public:
-        DesignTool(){//constructor
-            sAppName = "Polymorphism";
-        }
-
-        bool OnUserCreate() override{//overrides mean that the compiler will throw an error if the signature of the function changes from the base class function
-            vOffset = {(float)(-ScreenWidth() / 2) /fScale, (float) (-ScreenHeight()/2)};
-
-            return true;
-        }
-
-        bool OnUserUpdate(float fElapsedTime) override{
-            // Get mouse location this frame
+	bool OnUserUpdate(float fElapsedTime) override
+	{
+		// Get mouse location this frame
 		olc::vf2d vMouse = { (float)GetMouseX(), (float)GetMouseY() };
 
 
@@ -235,9 +367,7 @@ class DesignTool : public olc::PixelGameEngine{
 		}
 
 
-		// As the user left clicks to place nodes, the shape can grow
-		// until it requires no more nodes, at which point it is completed
-		// and added to the list of completed shapes.
+		
 		if (GetMouse(0).bReleased)
 		{
 			if (tempShape != nullptr)
@@ -247,7 +377,7 @@ class DesignTool : public olc::PixelGameEngine{
 				{
 					tempShape->col = olc::WHITE;
 					listShapes.push_back(tempShape);
-					tempShape = nullptr; // Thanks @howlevergreen /Disord
+					tempShape = nullptr; 
 				}
 				
 			}
@@ -319,16 +449,16 @@ class DesignTool : public olc::PixelGameEngine{
 		// Draw Cursor Position
 		DrawString(10, 10, "X=" + std::to_string(vCursor.x) + ", Y=" + std::to_string(vCursor.x), olc::YELLOW, 2);
 		return true;
-        }
+	}
 };
 
 
-
-int main(){
-
-    DesignTool demo;
-    if(demo.Construct(1600, 960, 1, 1)){//pge function since it is the parent class of DesignTool
-        demo.Start();
-    }
-    return 0;
+int main()
+{
+	DesignTool demo;
+	if (demo.Construct(800, 480, 1, 1, false))
+		demo.Start();
+	return 0;
 }
+
+
